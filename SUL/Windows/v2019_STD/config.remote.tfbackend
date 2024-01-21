@@ -1,0 +1,3 @@
+workspaces { name = "changename" }
+hostname     = "app.terraform.io"
+organization = "oranization_name"

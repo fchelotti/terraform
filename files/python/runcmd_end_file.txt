@@ -1,0 +1,15 @@
+# Configure ifcfg files for the ens192, ens224, and ens256 interfaces
+runcmd:
+  - sed -i -e '$aNAME=ens192' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i -e '$aNETWORKING_IPV6=no' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i -e '$aIPV6INIT=no' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i -e '$aNAME=ens224' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - sed -i -e '$aNETWORKING_IPV6=no' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - sed -i -e '$aIPV6INIT=no' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - sed -i -e '$aNAME=ens256' /etc/sysconfig/network-scripts/ifcfg-ens256
+  - sed -i -e '$aNETWORKING_IPV6=no' /etc/sysconfig/network-scripts/ifcfg-ens256
+  - sed -i -e '$aIPV6INIT=no' /etc/sysconfig/network-scripts/ifcfg-ens256
+  - sed -i '/USERCTL\|PROXY_METHOD\|BROWSER_ONLY\|DEFROUTE\|IPV4_FAILURE_FATAL\|IPV6_DEFROUTE\|IPV6_FAILURE_FATAL\|UUID\|IPV6_DISABLED/d' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i '/USERCTL\|PROXY_METHOD\|BROWSER_ONLY\|DEFROUTE\|IPV4_FAILURE_FATAL\|IPV6_DEFROUTE\|IPV6_FAILURE_FATAL\|UUID\|IPV6_DISABLED/d' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - sed -i '/USERCTL\|PROXY_METHOD\|BROWSER_ONLY\|DEFROUTE\|IPV4_FAILURE_FATAL\|IPV6_DEFROUTE\|IPV6_FAILURE_FATAL\|UUID\|IPV6_DISABLED/d' /etc/sysconfig/network-scripts/ifcfg-ens256
+  - systemctl restart NetworkManager

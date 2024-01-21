@@ -1,0 +1,11 @@
+# Configure NetworkManager to use the ens192, ens224, and ens256 interfaces
+# and disable IPv6 on those interfaces
+runcmd:
+  - nmcli connection modify "System ens192" connection.id "ens192"
+  - nmcli connection modify "System ens224" connection.id "ens224"
+  - nmcli connection modify "System ens256" connection.id "ens256"
+  - nmcli connection modify ens192 ipv6.method "disabled"
+  - nmcli connection modify ens224 ipv6.method "disabled"
+  - nmcli connection modify ens256 ipv6.method "disabled"
+
+# Configure the routes for the ens192, ens224, and ens256 interfaces

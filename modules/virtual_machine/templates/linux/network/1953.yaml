@@ -1,0 +1,60 @@
+#cloud-config
+users:
+  - name: admin
+    lock_passwd: false
+    passwd: $6$qKqz/M02xBhnWtRk$zIvSUvCKk3xnB5b03dhvsii5lZSyysnJJekDcWmg7mtqGaNr7gRqC6Lwe2QWSVGiuKW18nO9gNDqIfBh15ilE0
+    shell: /bin/bash
+    chpasswd: { expire: False }
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, admin
+ssh_pwauth: True
+
+bootcmd:
+  - echo "Starting Static Route Configuration"
+
+# Configure NetworkManager to use the ens192, ens224 interfaces
+# and disable IPv6 on those interfaces
+runcmd:
+  - nmcli connection modify "System ens192" connection.id "ens192"
+  - nmcli connection modify "System ens224" connection.id "ens224"
+  - nmcli connection modify ens192 ipv6.method "disabled"
+  - nmcli connection modify ens224 ipv6.method "disabled"
+
+# Configure static routes for the ens192, ens224 interfaces
+
+write_files:
+- path: /etc/sysconfig/network-scripts/route-ens192
+  content: |
+    ADDRESS0=0.0.0.0
+    NETMASK0=0.0.0.0
+    GATEWAY0=10.119.1.41
+
+    ADDRESS1=10.119.1.40
+    NETMASK1=255.255.255.248
+    GATEWAY1=10.119.1.41
+
+    ADDRESS2=10.160.0.0
+    NETMASK2=255.255.0.0
+    GATEWAY2=10.119.1.41
+  owner: 'root:root'
+  append: true
+
+- path: /etc/sysconfig/network-scripts/route-ens224
+  content: |
+    ADDRESS0=10.119.241.40
+    NETMASK0=255.255.255.248
+    GATEWAY0=10.119.241.41
+  owner: 'root:root'
+  append: true
+
+# Configure ifcfg files for the ens192, ens224 interfaces
+runcmd:
+  - sed -i -e '$aNAME=ens192' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i -e '$aNETWORKING_IPV6=no' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i -e '$aIPV6INIT=no' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i -e '$aNAME=ens224' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - sed -i -e '$aNETWORKING_IPV6=no' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - sed -i -e '$aIPV6INIT=no' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - sed -i '/USERCTL\|PROXY_METHOD\|BROWSER_ONLY\|DEFROUTE\|IPV4_FAILURE_FATAL\|IPV6_DEFROUTE\|IPV6_FAILURE_FATAL\|UUID\|IPV6_DISABLED/d' /etc/sysconfig/network-scripts/ifcfg-ens192
+  - sed -i '/USERCTL\|PROXY_METHOD\|BROWSER_ONLY\|DEFROUTE\|IPV4_FAILURE_FATAL\|IPV6_DEFROUTE\|IPV6_FAILURE_FATAL\|UUID\|IPV6_DISABLED/d' /etc/sysconfig/network-scripts/ifcfg-ens224
+  - systemctl restart NetworkManager

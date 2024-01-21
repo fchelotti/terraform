@@ -1,0 +1,24 @@
+#cloud-config
+instance-id: "${name_vm}"
+local-hostname: "${name_vm}"
+network:
+  version: 2
+  ethernets:
+    ens192:
+      set-name: ens192
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - ${ipv4_address_data}/${ipv4_netmask_data}
+    ens224:
+      set-name: ens224
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - ${ipv4_address_mgmt}/${ipv4_netmask_mgmt}
+    ens256:
+      set-name: ens256
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - ${ipv4_address_backup}/${ipv4_netmask_backup}

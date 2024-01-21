@@ -1,0 +1,1337 @@
+import java.text.SimpleDateFormat;
+import groovy.json.JsonSlurper;
+// @Library('projetoLibrary@master') _
+
+pipeline {
+    agent {
+        label "sul-terraform"
+    }
+    
+    options {
+      buildDiscarder(logRotator(numToKeepStr: '200', artifactNumToKeepStr: '200'))
+      timeout(time: 120, unit: "MINUTES")
+      ansiColor("xterm")
+
+      throttleJobProperty(
+        limitOneJobWithMatchingParams: false,
+        maxConcurrentPerNode: 8,
+        maxConcurrentTotal: 8,
+        paramsToUseForLimit: '',
+        throttleEnabled: true,
+        throttleOption: 'project'
+      )
+    }
+
+    environment {
+      BUILD_DATE = new SimpleDateFormat("yyyy-MM-dd").format(new Date())
+    }
+
+    stages {
+        stage('Parameters'){
+            steps {
+                script {
+                properties([
+                        parameters([
+                            [$class: 'ChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'Production', 
+                                description: 'The VM will be deployed in Production?',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get Environment from Env Param']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: true, 
+                                            script:
+                                                "return['YES', 'NO']"
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'DataCenter',
+                                description: 'Select the DataCenter to deploy the VM.',
+                                filterLength: 1,
+                                filterable: false,
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get DataCenter']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = ""
+                                            def pass = ""
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "")
+                                            def prodName = []
+                                            def prodID = []
+
+                                            def prodResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/datacenter?folders=group-d5008", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                                            def prodList = new JsonSlurper().parseText( prodResponse )
+
+                                            prodList.each { prodName.push(it.name) }
+                                            prodList.each { prodID.push(it.datacenter) }
+                                            Map prodResult = [prodID, prodName].transpose().collectEntries()
+
+                                            return prodResult
+                                            '''
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'Folder',
+                                description: 'Select the Folder to where the VM will be deployed.',
+                                referencedParameters: 'DataCenter',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get Folder']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = ""
+                                            def pass = ""
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "")
+
+                                            def folderName = []
+                                            def folderID = []
+                                            def folderResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/folder?type=VIRTUAL_MACHINE&datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                                            def folderParse = new JsonSlurper().parseText( folderResponse )
+                                            folderParse.each{ folderName.push(it.name) }
+                                            folderParse.each{ folderID.push(it.folder) }
+
+                                            Map folderList = [folderID, folderName].transpose().collectEntries()
+
+                                            return folderList
+                                            '''
+                                        ]
+                                ]
+                            ],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'Cluster',
+                                description: 'Select the Cluster to deploy the VM',
+                                referencedParameters: 'DataCenter',
+                                filterLength: 1,
+                                filterable: false,
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get Cluster']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = ""
+                                            def pass = ""
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def clusterList = []
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "")
+
+                                            def clusterResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/cluster?datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value }"].execute().text
+                                            def clusterParse = new JsonSlurper().parseText( clusterResponse )
+                                            clusterParse.each { clusterList.push(it.name) }
+
+                                            return clusterList
+                                            '''
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'DataStore',
+                                description: 'Select the DataStore to deploy the VM, the DataStore must have at least 20% of free space and 200 GiB of free space.',
+                                referencedParameters: 'DataCenter, Cluster, Production',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get DataStore']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = "";
+                                            def pass = "";
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "");
+
+                                            def dataStore = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/datastore?datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                                            def dataStoreParse = new JsonSlurper().parseText( dataStore );
+
+                                            def dataStoreFree = dataStoreParse.findResults { it.free_space > it.capacity * 0.2 && it.free_space > 200 ? it.name: null }
+                                            def clusterDatastore = Cluster.replaceAll("-CL-","-DS-")
+                                            def dataStoreTY
+                                            def datastoreTN
+
+                                            if (Production.equals("YES")) {
+                                                dataStoreTY = dataStoreFree.findResults { it.contains("${clusterDatastore}-TY-") ? it: null}
+                                                def resultTY = dataStoreTY.findResults { !it.contains("-PH-") ? it: null}
+                                                return resultTY
+                                            } else {
+                                                datastoreTN = dataStoreFree.findResults { it.contains("${clusterDatastore}-TN-") ? it: null}
+                                                def resultTN = datastoreTN.findResults { !it.contains("-PH-") ? it: null}
+                                                return resultTN
+                                            }
+                                            '''
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'DynamicReferenceParameter',
+                                choiceType: 'ET_FORMATTED_HTML',
+                                name: '',
+                                referencedParameters: 'DataCenter, DataStore',
+                                script:
+                                    [$class: 'GroovyScript',
+                                    fallbackScript: [
+                                            classpath: [],
+                                            sandbox: false,
+                                            script: '''return "No DataStore meets the rule (20% free space and at least 200 GiB of space)"'''
+                                            ],
+                                    script: [
+                                        classpath: [],
+                                        sandbox: false,
+                                        script: '''
+                                        import jenkins.*
+                                        import jenkins.model.*
+                                        import hudson.*
+                                        import hudson.model.*
+                                        import groovy.json.JsonSlurper
+
+                                        def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                com.cloudbees.plugins.credentials.Credentials.class,
+                                                Jenkins.instance,
+                                                null,
+                                                null
+                                        );
+
+                                        def user = ""
+                                        def pass = ""
+
+                                        for (creds in jenkinsCredentials) {
+                                            if(creds.id == "vmUser"){
+                                                user = creds.username
+                                                pass = creds.password
+                                            }
+                                        }
+
+                                        def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text;
+                                        def value = token.replaceAll("\\"", "");
+
+                                        def bytesToGigabytes(long bytes) {
+                                            int gigaBytes = bytes / 1073741824.0
+                                            return gigaBytes
+                                        };
+
+                                        def listName = [];
+                                        def listID = [];
+                                        def dataStore = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/datastore?datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                                        def dataStoreParse = new JsonSlurper().parseText( dataStore );
+                                        dataStoreParse.each{ listName.push(it.name) }
+                                        dataStoreParse.each{ listID.push(it.datastore) }
+                                        Map dataStoreList = [listName, listID].transpose().collectEntries()
+
+                                        def dataStoreName = "${DataStore}"
+                                        def dataStoreID = dataStoreList[dataStoreName]
+
+                                        def dataStore2 = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/datastore?datastores=${dataStoreID}&datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                                        def dataStoreParse2 = new JsonSlurper().parseText( dataStore2 );
+                                        def dataStoreCapacity  = dataStoreParse2.findResults { it.capacity };
+                                        def dataStoreFree = dataStoreParse2.findResults { it.free_space };
+
+                                        return "DataStore Capacity: " + bytesToGigabytes(dataStoreCapacity[0]) + " GiB" + " | " + "DataStore Free: " + bytesToGigabytes(dataStoreFree[0]) + " GiB";
+                                        '''
+                                    ]
+                                ]
+                            ],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'vmList',
+                                description: 'List of VMs in the selected Folder to avoid duplicated names. If the name is not in the list, it is available to use.',
+                                referencedParameters: 'Folder',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get VMs']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = ""
+                                            def pass = ""
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "")
+
+                                            def vms = []
+                                            def vmsList = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/vm?folders=${Folder}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                                            def vmsParse = new JsonSlurper().parseText( vmsList )
+                                            vmsParse.each{ vms.push(it.name) }
+
+                                            return vms.sort{ it }
+                                            '''
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'StringParameterDefinition', defaultValue: 'lxpruebasSize00', description: 'The name of VM is concatenate with the name of the change. WARNING: Do not user "_" in the name of VM', name: 'VMname'],
+                            [$class: 'DynamicReferenceParameter',
+                                choiceType: 'ET_FORMATTED_HTML',
+                                name: '',
+                                referencedParameters: 'Folder, VMname',
+                                script:
+                                    [$class: 'GroovyScript',
+                                    fallbackScript: [
+                                            classpath: [],
+                                            sandbox: false,
+                                            script: "return['Script Error']"
+                                            ],
+                                    script: [
+                                        classpath: [],
+                                        sandbox: false,
+                                        script: '''
+                                        import jenkins.*
+                                        import jenkins.model.*
+                                        import hudson.*
+                                        import hudson.model.*
+                                        import groovy.json.JsonSlurper
+
+                                        def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                com.cloudbees.plugins.credentials.Credentials.class,
+                                                Jenkins.instance,
+                                                null,
+                                                null
+                                        );
+
+                                        def user = ""
+                                        def pass = ""
+
+                                        for (creds in jenkinsCredentials) {
+                                            if(creds.id == "vmUser"){
+                                                user = creds.username
+                                                pass = creds.password
+                                            }
+                                        }
+
+                                        def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                        def value = token.replaceAll("\\"", "")
+
+                                        def vms = []
+                                        def vmsList = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/vm?folders=${Folder}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                                        def vmsParse = new JsonSlurper().parseText( vmsList )
+                                        vmsParse.each{ vms.push(it.name) }
+
+                                        if (vms.contains(VMname.toUpperCase())) {
+                                            return "This name ALREADY EXIST in this Folder"
+                                        } else {
+                                            return "This name is AVAILABLE"
+                                        }
+                                        '''
+                                    ]
+                                ]
+                            ],
+                            [$class: 'ChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'Countries',
+                                description: 'Select the country to obtain acronyms that will be used in the bastionado script.',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get Environment from Env Param']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: true, 
+                                            script:
+                                                "return['Brasil','Argentina','Uruguay', 'Paraguay', 'Chile', 'Comun_App_SP', 'Comun_Gest_SP']"
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'ChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'Subscription',
+                                description: 'Select the Subscription to use for Red Hat Satellite.',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get Environment from Env Param']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: true, 
+                                            script:
+                                                "return['Brasil','Brasil_Jboss','Other_Countries']"
+                                        ] 
+                                ]
+                            ],
+                            // [$class: 'ChoiceParameter', 
+                            //     choiceType: 'PT_SINGLE_SELECT', 
+                            //     name: 'CountriesDomain',
+                            //     description: 'Select the Country to get the Organization Unit',
+                            //     filterLength: 1,
+                            //     filterable: false, 
+                            //     script: 
+                            //         [$class: 'GroovyScript', 
+                            //         fallbackScript: [
+                            //                 classpath: [], 
+                            //                 sandbox: false, 
+                            //                 script: "return['Could not get Countries Domain from Env Param']"
+                            //                 ], 
+                            //         script: [
+                            //                 classpath: [], 
+                            //                 sandbox: false, 
+                            //                 script:
+                            //                     "return['COSTA RICA','COLOMBIA','ECUADOR', 'ELSALVADOR', 'NICARAGUA', 'PANAMA', 'PERU', 'GESTION', 'PORTO RICO - PROD', 'PORTO RICO - DEV', 'PCI DISMA ESPANHA', 'REPUBLICA DOMINICANA', 'VENEZUELA - SEGURIDAD', 'VENEZUELA - LOCAL', 'DLTM', 'PCI DISMA ESPANHA SUL', 'GESTION BR']"
+                            //             ] 
+                            //     ]
+                            // ],
+                            // [$class: 'CascadeChoiceParameter', 
+                            //     choiceType: 'PT_SINGLE_SELECT', 
+                            //     name: 'OrganizationUnit',
+                            //     referencedParameters: 'CountriesDomain',
+                            //     description: 'Select the Organization Unit',
+                            //     filterLength: 1,
+                            //     filterable: false,
+                            //     script: 
+                            //         [$class: 'GroovyScript', 
+                            //         fallbackScript: [
+                            //                 classpath: [], 
+                            //                 sandbox: false, 
+                            //                 script: "return['Could not get Domain']"
+                            //                 ], 
+                            //         script: [
+                            //                 classpath: [], 
+                            //                 sandbox: false, 
+                            //                 script: '''
+                            //                 import groovy.json.JsonSlurper
+                            //                 import groovy.io.FileType
+
+                            //                 class JsonReader {
+                            //                     def readJsonFile(String path) {
+                            //                         def jsonSlurper = new JsonSlurper() // Groovy class for parsing JSON
+                            //                         def jsonFile = new File(path) // Groovy class for reading files
+                                                    
+                            //                         if (jsonFile.exists() && jsonFile.isFile() && jsonFile.name.endsWith(".json")) {
+                            //                         return jsonSlurper.parse(jsonFile)
+                            //                         } else {
+                            //                         throw new IllegalArgumentException("Invalid JSON file path: $path")
+                            //                         }
+                            //                     }
+                            //                 }
+
+                            //                 def list = []
+                            //                 def path = new File("/var/jenkins_home/files/")
+
+                            //                 def filterCountryJson(country, filePath) {
+                            //                     def jsonReader = new JsonReader()
+                            //                     def jsonFilePath = "${filePath}/organization-unit.json"
+                                            
+                            //                     try {
+                            //                         def jsonData = jsonReader.readJsonFile(jsonFilePath)
+                            //                         def filterCountry = jsonData['countries'][country]
+                            //                         return filterCountry
+                            //                     } catch (Throwable e) {
+                            //                         return [e.toString()]
+                            //                     }
+                            //                 }
+
+                            //                 filterCountryJson(CountriesDomain, path)
+                            //                 '''
+                            //             ] 
+                            //     ]
+                            // ],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'NetworkData',
+                                description: 'Select the Network Data to deploy the VM.',
+                                referencedParameters: 'DataCenter, Cluster',
+                                filterLength: 1,
+                                filterable: false,
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get NetworkData']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = ""
+                                            def pass = ""
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "")
+
+                                            def networkList = []
+                                            def networkResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/network?datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text;
+                                            def networkParse = new JsonSlurper().parseText( networkResponse )
+                                            def networkResult = networkParse.findResults { it.name.contains("DATA") ? it.name: null}
+
+                                            if (Cluster.contains("NODMZ")) {
+                                                return networkResult.findResults { it.contains("NODMZ") ? it: null}.sort{ it }
+                                            } else {
+                                                return networkResult.findResults { it.contains("-DMZ") ? it: null}.sort{ it }
+                                            }
+                                            '''
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'StringParameterDefinition', defaultValue: '10.104.244.0', description: '', name: 'IPV4_ADDRESS_DATA'],
+                            [$class: 'StringParameterDefinition', defaultValue: '22', description: '', name: 'PREFIX_DATA'],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'NetworkMgmt',
+                                description: 'Select the Network Management to deploy the VM.',
+                                referencedParameters: 'DataCenter, Cluster',
+                                filterLength: 1,
+                                filterable: false,
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get NetworkMgmt']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = ""
+                                            def pass = ""
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "")
+
+                                            def networkList = []
+                                            def networkResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/network?datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text;
+                                            def networkParse = new JsonSlurper().parseText( networkResponse )
+                                            def networkResult = networkParse.findResults { it.name.contains("MGMT") ? it.name: null}
+
+                                            if (Cluster.contains("NODMZ")) {
+                                                return networkResult.findResults { it.contains("NODMZ") ? it: null}.sort{ it }
+                                            } else {
+                                                return networkResult.findResults { it.contains("-DMZ") ? it: null}.sort{ it }
+                                            }
+                                            '''
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'StringParameterDefinition', defaultValue: '10.106.245.0', description: '', name: 'IPV4_ADDRESS_MGMT'],
+                            [$class: 'StringParameterDefinition', defaultValue: '22', description: '', name: 'PREFIX_MGMT'],
+                            [$class: 'CascadeChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'NetworkBackup',
+                                description: 'Select the Network Backup to deploy the VM.',
+                                referencedParameters: 'DataCenter, Cluster',
+                                filterLength: 1,
+                                filterable: false,
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get NetworkBackup']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: '''
+                                            import jenkins.*
+                                            import jenkins.model.*
+                                            import hudson.*
+                                            import hudson.model.*
+                                            import groovy.json.JsonSlurper
+
+                                            def jenkinsCredentials = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                                                    com.cloudbees.plugins.credentials.Credentials.class,
+                                                    Jenkins.instance,
+                                                    null,
+                                                    null
+                                            );
+
+                                            def user = ""
+                                            def pass = ""
+
+                                            for (creds in jenkinsCredentials) {
+                                                if(creds.id == "vmUser"){
+                                                    user = creds.username
+                                                    pass = creds.password
+                                                }
+                                            }
+
+                                            def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                                            def value = token.replaceAll("\\"", "")
+
+                                            def networkList = []
+                                            def networkResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/network?datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text;
+                                            def networkParse = new JsonSlurper().parseText( networkResponse )
+                                            def networkResult = networkParse.findResults { it.name.contains("BACKUP") ? it.name: null}
+
+                                            if (Cluster.contains("NODMZ")) {
+                                                return networkResult.findResults { it.contains("NODMZ") ? it: null}.sort{ it }
+                                            } else {
+                                                return networkResult.findResults { it.contains("-DMZ") ? it: null}.sort{ it }
+                                            }
+                                            '''
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'StringParameterDefinition', defaultValue: '10.107.246.0', description: '', name: 'IPV4_ADDRESS_BKP'],
+                            [$class: 'StringParameterDefinition', defaultValue: '22', description: '', name: 'PREFIX_BKP'],
+                            [$class: 'StringParameterDefinition', defaultValue: 'CHG0000', description: 'Type the change name only.', name: 'CHANGE'],
+                            [$class: 'StringParameterDefinition', defaultValue: '4', description: 'Number of the CPUs.', name: 'CPU'],
+                            [$class: 'StringParameterDefinition', defaultValue: '4', description: 'Memory.', name: 'MEMORY'],
+                            [$class: 'StringParameterDefinition', defaultValue: '70', description: 'ATENTION: For REDHAT8 the minimum size is 70GB for ORACLE it is 100GB.', name: 'DISK'],
+                            [$class: 'ChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'Version',
+                                description: 'Select the version of the SO.',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get Environment from Env Param']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: true, 
+                                            script:
+                                                "return['vRH8', 'vRH8_Oracle19']"
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'ChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'ADM_SERVIDOR',
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get ADM_SERVER from Env Param']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: true, 
+                                            script:
+                                                "return['A', 'B', 'C']"
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'ChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                name: 'OWNER', 
+                                filterLength: 1,
+                                filterable: false, 
+                                script: 
+                                    [$class: 'GroovyScript', 
+                                    fallbackScript: [
+                                            classpath: [], 
+                                            sandbox: false, 
+                                            script: "return['Could not get ADM_SERVER from Env Param']"
+                                            ], 
+                                    script: [
+                                            classpath: [], 
+                                            sandbox: true, 
+                                            script:
+                                                "return['A', 'C']"
+                                        ] 
+                                ]
+                            ],
+                            [$class: 'TextParameterDefinition', defaultValue: 'Create by Terraform', description: '', name: 'ANNOTATION'],
+                            [$class: 'ChoiceParameter', 
+                                choiceType: 'PT_SINGLE_SELECT', 
+                                filterLength: 1, 
+                                filterable: false, 
+                                name: 'Terraform', 
+                                script: [
+                                    $class: 'GroovyScript', 
+                                    fallbackScript: [
+                                        classpath: [], 
+                                        sandbox: false, 
+                                        script: 
+                                            "return['Could not get Terraform options']"
+                                    ], 
+                                    script: [
+                                        classpath: [], 
+                                        sandbox: true, 
+                                        script: 
+                                            "return['APPLY','PLAN','PREVIEW-DESTROY','DESTROY']"
+                                    ]
+                                ]
+                            ]
+                        ])
+                    ])
+                }
+            }
+        }
+
+        stage('IP Address Check') {
+            when {
+                anyOf {
+                    expression { params.Terraform == 'APPLY' };
+                    expression { params.Terraform == 'PLAN' }
+                }
+            }
+
+            steps {
+                container('terraform') {
+                    script {
+                        def ipAddresses = [IPV4_ADDRESS_DATA, IPV4_ADDRESS_MGMT, IPV4_ADDRESS_BKP]
+
+                        for (def ipAddress in ipAddresses) {
+                            def pingCommand = "ping -c 2 ${ipAddress}"
+                            def pingResult = sh(returnStatus: true, script: pingCommand)
+
+                            if (pingResult == 0) {
+                                error "IP ADDRESS ${ipAddress} IS ALREADY IN USE"
+                            } else {
+                                echo "IP ADDRESS ${ipAddress} IS AVAILABLE"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Clone Repo') {
+            steps {
+                echo 'Cloning Terraform Repo from Bitbucket'
+                git credentialsId: 'bitbucket_token', url: 'https://github.com/fchelotti/terraform.git', branch: 'master'
+            }   
+        }
+
+        stage('Pre Build') {
+            environment {
+                TF_TOKEN_app_terraform_io = credentials('terraform_cloud')
+                TF_BACKEND_TOKEN = credentials('terraform_cloud')
+            }
+
+            steps {
+                script {
+                    def terraformWorkspaceGroovy = "${params.CHANGE.toUpperCase()}-${params.VMname.toUpperCase()}"
+                    env.terraformWorkspace = terraformWorkspaceGroovy
+                }
+
+                container('terraform') {
+                    echo 'Configuring Terraform Cloud Token'
+                    sh 'echo "192.168.200.245 br-vcenter-01.brger001.corp" >> /etc/hosts'
+                    sh 'mkdir -p ~/.terraform.d'
+                    sh '''cat <<- _EOF_ >> ~/.terraform.d/credentials.tfrc.json
+                    {
+                        "credentials": {
+                            "app.terraform.io": {
+                                "token": "${TF_TOKEN_app_terraform_io}"
+                            }
+                        }
+                    }%
+                    _EOF_'''
+                    echo 'Configuring Terraform Cloud Backend'
+                    dir("SUL/Linux/${params.Version}") {
+                        sh 'sed -i "s/changename/${terraformWorkspace}/g" config.remote.tfbackend'
+                        sh 'sed -i "s/oranization_name/${ORGANIZATION}/g" config.remote.tfbackend'
+                        sh 'terraform init -backend-config=config.remote.tfbackend'
+                        sh 'terraform validate'
+                        sh '''
+                        curl --write-out '%{http_code}' -s --output /dev/null --header "Authorization: Bearer $(echo $TF_BACKEND_TOKEN)" \
+                        --header "Content-Type: application/vnd.api+json" \
+                        --request PATCH \
+                        --data '{"data": {"type": "workspaces", "attributes": {"operations": "false"}}}' https://app.terraform.io/api/v2/organizations/${ORGANIZATION}/workspaces/${terraformWorkspace}
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Build Variables') {
+            steps {
+                echo 'Building Variables from vCenter'
+                withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'vmUser', usernameVariable: 'user', passwordVariable: 'pass']]) {
+                    script {
+                        def token = ["curl", "--insecure", "-XPOST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", "Connection: close", "-H", "vmware-use-header-authn: test", "-H", "vmware-api-session-id: null", "-u", "${user}:${pass}", "https://[url do vcenter]/api/session"].execute().text
+                        def value = token.replaceAll("\"", "")
+
+                        def prodName = []
+                        def prodID = []
+                        def prodResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/datacenter?folders=group-d5008", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                        def prodList = new JsonSlurper().parseText( prodResponse )
+                        prodList.each { prodName.push(it.name) }
+                        prodList.each { prodID.push(it.datacenter) }
+                        Map prodResult = [prodID, prodName].transpose().collectEntries()
+                        env.resultDataCenter = prodResult[params.DataCenter]
+
+                        def folderName = []
+                        def folderID = []
+                        def folderResponse = ["curl", "--insecure", "-XGET", "https://[url do vcenter]/api/vcenter/folder?type=VIRTUAL_MACHINE&datacenters=${DataCenter}", "-H", "Connection: close", "-H", "vmware-api-session-id: ${value}"].execute().text
+                        def folderParse = new JsonSlurper().parseText( folderResponse )
+                        folderParse.each{ folderName.push(it.name) }
+                        folderParse.each{ folderID.push(it.folder) }
+
+                        Map folderList = [folderID, folderName].transpose().collectEntries()
+                        env.resultFolder = folderList[params.Folder]
+
+                        env.vlanID = params.NetworkData.findAll(/\d{1,3}.?\d{2,3}?/)
+                        vlanID = vlanID.replaceAll(~/[\[\]]/, '')
+                        
+                        def DictAcronym = [
+                                Argentina: 'AR',
+                                Brasil: 'BR',
+                                Uruguay: 'UY',
+                                Paraguay: 'PY',
+                                Chile: 'CL',
+                                Comun_App_SP: 'CS',
+                                Comun_Gest_SP: 'GS'
+                            ]
+
+                        env.resultAcronym = DictAcronym[params.Countries]
+                        // env.domainResult = domainName(params.OrganizationUnit)
+                        // env.strOganizationUnit = params.OrganizationUnit.toString()
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            when {
+                expression { params.Terraform == 'PLAN' }
+            }
+
+            steps {
+                container('terraform') {
+                    dir ("SUL/Linux/${params.Version}") {
+                        sh "terraform plan \
+                        -input=false \
+                        -var vm_name=${params.VMname.toUpperCase()} \
+                        -var datacenter=\'${resultDataCenter}\' \
+                        -var cluster=${params.Cluster} \
+                        -var folder_name=${resultFolder} \
+                        -var datastore=\'${params.DataStore}\' \
+                        -var network_data=${params.NetworkData} \
+                        -var ipv4_address_data=${params.IPV4_ADDRESS_DATA} \
+                        -var prefix_data=${params.PREFIX_DATA} \
+                        -var network_mgmt=${params.NetworkMgmt} \
+                        -var prefix_mgmt=${params.PREFIX_MGMT} \
+                        -var ipv4_address_mgmt=${params.IPV4_ADDRESS_MGMT} \
+                        -var network_backup=${params.NetworkBackup} \
+                        -var ipv4_address_backup=${params.IPV4_ADDRESS_BKP} \
+                        -var prefix_bkp=${params.PREFIX_BKP} \
+                        -var vlan_id=${vlanID} \
+                        -var cpu=${params.CPU} \
+                        -var memory=${params.MEMORY} \
+                        -var disk=${params.DISK} \
+                        -var tag_adm=${params.ADM_SERVIDOR} \
+                        -var tag_cluster=${params.Cluster} \
+                        -var tag_cambio=${CHANGE} \
+                        -var tag_data=${BUILD_DATE} \
+                        -var tag_datastore=\'${params.DataStore}\' \
+                        -var tag_ip_backup=${params.IPV4_ADDRESS_BKP} \
+                        -var tag_ip_data=${params.IPV4_ADDRESS_DATA} \
+                        -var tag_ip_mgmt=${params.IPV4_ADDRESS_MGMT} \
+                        -var tag_owner=${params.OWNER} \
+                        -var annotation='${params.ANNOTATION}'"
+                    }
+                }
+            }
+        }
+        
+        stage('Terraform Apply') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                input message: 'Waiting for approval to continue'
+                container('terraform') {
+                    dir ("SUL/Linux/${params.Version}") {
+                        sh "terraform apply \
+                        -auto-approve \
+                        -input=false \
+                        -var vm_name=${params.VMname.toUpperCase()} \
+                        -var datacenter=\'${resultDataCenter}\' \
+                        -var cluster=${params.Cluster} \
+                        -var folder_name=${resultFolder} \
+                        -var datastore=\'${params.DataStore}\' \
+                        -var network_data=${params.NetworkData} \
+                        -var ipv4_address_data=${params.IPV4_ADDRESS_DATA} \
+                        -var prefix_data=${params.PREFIX_DATA} \
+                        -var network_mgmt=${params.NetworkMgmt} \
+                        -var prefix_mgmt=${params.PREFIX_MGMT} \
+                        -var ipv4_address_mgmt=${params.IPV4_ADDRESS_MGMT} \
+                        -var network_backup=${params.NetworkBackup} \
+                        -var ipv4_address_backup=${params.IPV4_ADDRESS_BKP} \
+                        -var prefix_bkp=${params.PREFIX_BKP} \
+                        -var vlan_id=${vlanID} \
+                        -var cpu=${params.CPU} \
+                        -var memory=${params.MEMORY} \
+                        -var disk=${params.DISK} \
+                        -var tag_adm=${params.ADM_SERVIDOR} \
+                        -var tag_cluster=${params.Cluster} \
+                        -var tag_cambio=${CHANGE} \
+                        -var tag_data=${BUILD_DATE} \
+                        -var tag_datastore=\'${params.DataStore}\' \
+                        -var tag_ip_backup=${params.IPV4_ADDRESS_BKP} \
+                        -var tag_ip_data=${params.IPV4_ADDRESS_DATA} \
+                        -var tag_ip_mgmt=${params.IPV4_ADDRESS_MGMT} \
+                        -var tag_owner=${params.OWNER} \
+                        -var annotation='${params.ANNOTATION}'"
+                    }
+                }
+            }
+        }
+
+        stage('Preview Destroy') {
+            when {
+                expression { params.Terraform == 'PREVIEW-DESTROY' }
+            }
+
+            steps {
+                container('terraform') {
+                    dir ("SUL/Linux/${params.Version}") {
+                        sh 'terraform plan \
+                        -destroy -input=false'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Destroy') {
+            when {
+                expression { params.Terraform == 'DESTROY' }
+            }
+
+            steps {
+                input message: 'Waiting for approval to continue'
+                container('terraform') {
+                    dir ("SUL/Linux/${params.Version}") {
+                        sh "terraform destroy \
+                        -auto-approve \
+                        -input=false \
+                        -var vm_name=${params.VMname.toUpperCase()} \
+                        -var datacenter=\'${resultDataCenter}\' \
+                        -var cluster=${params.Cluster} \
+                        -var folder_name=${resultFolder} \
+                        -var datastore=\'${params.DataStore}\' \
+                        -var network_data=${params.NetworkData} \
+                        -var ipv4_address_data=${params.IPV4_ADDRESS_DATA} \
+                        -var prefix_data=${params.PREFIX_DATA} \
+                        -var network_mgmt=${params.NetworkMgmt} \
+                        -var prefix_mgmt=${params.PREFIX_MGMT} \
+                        -var ipv4_address_mgmt=${params.IPV4_ADDRESS_MGMT} \
+                        -var network_backup=${params.NetworkBackup} \
+                        -var ipv4_address_backup=${params.IPV4_ADDRESS_BKP} \
+                        -var prefix_bkp=${params.PREFIX_BKP} \
+                        -var vlan_id=${vlanID} \
+                        -var cpu=${params.CPU} \
+                        -var memory=${params.MEMORY} \
+                        -var disk=${params.DISK} \
+                        -var tag_adm=${params.ADM_SERVIDOR} \
+                        -var tag_cluster=${params.Cluster} \
+                        -var tag_cambio=${CHANGE} \
+                        -var tag_data=${BUILD_DATE} \
+                        -var tag_datastore=\'${params.DataStore}\' \
+                        -var tag_ip_backup=${params.IPV4_ADDRESS_BKP} \
+                        -var tag_ip_data=${params.IPV4_ADDRESS_DATA} \
+                        -var tag_ip_mgmt=${params.IPV4_ADDRESS_MGMT} \
+                        -var tag_owner=${params.OWNER} \
+                        -var annotation='${params.ANNOTATION}'"
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Destroy Workspaces') {
+            when {
+                expression { params.Terraform == 'DESTROY' }
+            }
+
+            environment {
+                TF_BACKEND_TOKEN = credentials('terraform_cloud')
+            }
+
+            steps {
+                script {
+                    def terraformWorkspaceGroovy = "${params.CHANGE.toUpperCase()}-${params.VMname.toUpperCase()}"
+                    env.terraformWorkspace = terraformWorkspaceGroovy
+                }
+
+                container('terraform') {
+                    dir ("SUL/Linux/${params.Version}") {
+                        sh '''
+                        curl -s --header "Authorization: Bearer $(echo $TF_BACKEND_TOKEN)" \
+                        --header "Content-Type: application/vnd.api+json" \
+                        --request DELETE \
+                        --data '{"data": {"type": "workspaces", "attributes": {"operations": "false"}}}' https://app.terraform.io/api/v2/organizations/${ORGANIZATION}/workspaces/${terraformWorkspace}
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Linux Clone Volume Group') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    git credentialsId: 'bitbucket_token', url: 'https://github.com/fchelotti/ansible_volume_group.git', branch: 'master'
+                }
+            }
+        }
+
+        stage('Wait Host') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps{
+                retry(10) {
+                    container('ansible') {
+                        echo 'WAITING FOR THE SERVER TO GO UP'
+                        sleep time: 60, unit: 'SECONDS'
+                        sh 'ping -c 2 ${IPV4_ADDRESS_DATA}'
+                    }
+                }
+            }
+        }
+
+        stage('Pre Build Volume Group') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    sh 'for ip in ${IPV4_ADDRESS_DATA}; do sed -i "/linux/a $ip" Modulos/hosts; done'
+                }
+            }
+        }
+
+        stage('Apply Volume Group') {
+            when {
+                expression { params.Terraform == 'APPLY' };
+            }
+
+            steps {
+                withCredentials([string(credentialsId: 'root_password', variable: 'root_passwd')]){
+                    container('ansible') {
+                        script {
+                            sh 'ansible-playbook -i Modulos/hosts Modulos/sda4.yaml -e "root_password=${root_passwd}" -e "disk=${DISK}" -v'
+                        }
+                    }
+                }
+            } 
+        }
+
+        stage('Parcheados Linux Clone Repo') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    git credentialsId: 'bitbucket_token', url: 'https://github.com/fchelotti/ansibleparcheados_linux.git', branch: 'master'
+                }
+            }
+        }
+
+        stage('Pre Build Parcheados') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    sh 'for ip in ${IPV4_ADDRESS_DATA}; do sed -i "/linux/a $ip" Modulos/hosts; done'
+                }
+            }
+        }
+
+        stage('Apply Parcheados Sul') {
+            when {
+                expression { params.Terraform == 'APPLY' };
+            }
+
+            steps {
+                withCredentials([string(credentialsId: 'root_password', variable: 'root_passwd')]){
+                    container('ansible') {
+                        script {
+                            sh 'ansible-playbook -i Modulos/hosts Modulos/parcheado-linux-sul.yaml -e "root_password=${root_passwd}" -e "countries=${Countries}" -e "subscription=${Subscription}"'
+                        }
+                    }
+                }
+            } 
+        }
+
+        stage('Bastionados Linux Clone Repo') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    git credentialsId: 'bitbucket_token', url: 'https://github.com/fchelotti/ansiblebastionados_linux.git', branch: 'master'
+                }
+            }
+        }
+
+        stage('Pre Build Bastionados') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    sh 'for ip in ${IPV4_ADDRESS_DATA}; do sed -i "/linux/a $ip" Modulos/hosts; done'
+                }
+            }
+        }
+
+        stage('Apply Bastionados') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                withCredentials([string(credentialsId: 'jenkins_admin_passwd', variable: 'ansible_passwd'),
+                string(credentialsId: 'root_password', variable: 'root_passwd')]){
+                    container('ansible') {
+                        script {
+                            // sh 'ansible-playbook -i Modulos/hosts Modulos/bastionados-linux.yaml -e "ansible_password=${ansible_passwd}" -e "root_password=${root_passwd}" -e "countries=${Countries}" -e "acronym=${resultAcronym}" -e "domain=${domainResult}" -e "organization_unit=\'${strOganizationUnit}\'" -e "vmname=${VMname}" -v'
+                            sh 'ansible-playbook -i Modulos/hosts Modulos/bastionados-linux.yaml -e "ansible_password=${ansible_passwd}" -e "root_password=${root_passwd}" -e "countries=${Countries}" -e "acronym=${resultAcronym}" -v'
+                        }
+                    }
+                } 
+            }
+        }
+
+        stage('Agents Linux Clone Repo') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    git credentialsId: 'bitbucket_token', url: 'https://github.com/fchelotti/ansibleagentes_linux.git', branch: 'master'
+                }
+            }
+        }
+
+        stage('Pre Build Agents') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                container('ansible') {
+                    sh 'for ip in ${IPV4_ADDRESS_DATA}; do sed -i "/linux/a $ip" Modulos/hosts; done'
+                }
+            }
+        }
+
+        stage('Apply Agents') {
+            when {
+                expression { params.Terraform == 'APPLY' }
+            }
+
+            steps {
+                withCredentials([string(credentialsId: 'jenkins_admin_passwd', variable: 'ansible_passwd')]){
+                    container('ansible') {
+                        script {
+                            sh 'ansible-playbook -i Modulos/hosts Modulos/agentes-linux-sul.yaml -e "ansible_password=${ansible_passwd}" -e "cluster=${Cluster}"'
+                        }
+                    }
+                } 
+            }
+        }
+    }
+}
