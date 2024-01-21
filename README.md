@@ -1,7 +1,5 @@
 # Jenkins Pipeline for VM Provisioning in vSphere
 
-![Jenkins Pipeline](https://www.jenkins.io/images/logos/fire/fire.svg)
-
 ## Description
 
 This project utilizes Jenkins Pipeline, Terraform, Ansible, and Groovy script to automate the provisioning of VM machines in vSphere. By leveraging the power of Infrastructure as Code (IaC) and automation, this pipeline streamlines the process of creating virtual machines in your vSphere environment.
